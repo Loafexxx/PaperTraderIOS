@@ -1,0 +1,53 @@
+name: Build iPhone app (.ipa)
+
+on:
+  push:
+    branches: [main]
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build (unsigned, for sideloading)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project PaperTrader.xcodeproj -scheme PaperTrader -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 \
+            || { echo "::group::Compiler errors"; grep -E "error:|Error:" build.log | head -80; echo "::endgroup::"; exit 1; }
+          tail -5 build.log
+
+      - name: Package .ipa
+        working-directory: ios
+        run: |
+          rm -rf Payload && mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/PaperTrader.app Payload/
+          zip -qry PaperTrader.ipa Payload
+          ls -lh PaperTrader.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PaperTrader-ipa
+          path: ios/PaperTrader.ipa
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ios/build.log
